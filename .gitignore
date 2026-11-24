@@ -1,0 +1,53 @@
+# Donnees de jeu (ne jamais versionner)
+MAX/
+*.rom
+*.ROM
+*.nds
+*.NDS
+*.sav
+*.SAV
+*.state
+*.STATE
+*.iso
+*.ISO
+*.bin
+*.BIN
+*.img
+*.IMG
+*.zip
+*.ZIP
+*.7z
+*.tar
+*.tar.gz
+*.tgz
+
+# Binaires / artefacts de build
+*.apk
+*.dex
+*.o
+*.so
+*.a
+*.pyc
+*.class
+*.jar
+*.elf
+*.lha
+*.lz4
+*.lzma
+
+# Dumps, backups, captures console
+DUMPS*/
+*backup*/
+*BACKUP*/
+tombstone_*
+*.log
+
+# Editeurs / OS
+.DS_Store
+Thumbs.db
+*.swp
+*~
+.gradle/
+build/
+out/
+local.properties
