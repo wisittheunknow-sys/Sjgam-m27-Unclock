@@ -1,6 +1,6 @@
-# Historique du projet SJgam M27 / Sjgam-m27-Unclock
+# Historique de la console SJgam M27 / Sjgam-m27-Unclock
 
-Ce document retrace le travail réalisé sur la console SJgam M27 (Android 4.4.2 / API 19, RK3188, écran 1024×600) : déverrouillage ADB/root, noyau et pilotes, souris firmware, frontend, émulation, port de M.A.X., puis packaging d'une archive firmware reproductible.
+Ce document retrace le travail réalisé sur la console SJgam M27 (Android 4.4.2 / API 19, RK3188, écran 1024×600) : déverrouillage ADB/root, noyau et pilotes, souris firmware, rétablissement de `Settings.apk` et du clavier virtuel, frontend, émulation, puis packaging d'une archive firmware reproductible. Le port de M.A.X. est un projet annexe à la console : il est rapporté en Annexe A, son diagnostic du 25/11 en Annexe B.
 
 Il est volontairement **dépouillé** : aucune donnée originale de jeu, aucun binaire, aucun dump, aucune image ROM et aucun secret n'y sont copiés. Seuls les chemins, dates, décisions, codes de touches et checksums nécessaires à la compréhension sont conservés.
 
@@ -15,6 +15,7 @@ Sources : les journaux de travail `STATE.md` / `STATE.MD` tenus sur la machine d
 - `/system/usr/keylayout/rk29-keypad.kl` n'est touché qu'en dernier recours ; md5 de référence `29fb5f55eba641d01de7a11fd6120396`.
 - Aucun loader Rockchip n'est distribué ; aucun flash ni installation sur la console sans confirmation explicite.
 - Format retenu : archive flashable Rockchip contenant tout ce qui a été validé, hors données de jeu. Une seule reconstruction finale, après les tests utilisateur.
+- Le port M.A.X. n'est pas le sujet central : voir Annexe A et Annexe B en fin de document.
 
 ## Vue d'ensemble — jalons
 
@@ -24,7 +25,8 @@ Sources : les journaux de travail `STATE.md` / `STATE.MD` tenus sur la machine d
 | 07/10 | Premier flash noyau (build9), ADB root USB opérationnel. |
 | 08/10 | Découverte des vrais timings de dalle (600×1024 portrait) ; build13 net. |
 | 10/10 | Cause racine des contrôles trouvée : `rk29-keypad`, pas le pad USB ; build17 valide 24 boutons. |
-| 11–12/10 | LED des joycons, remise en service de `Settings.apk`, clavier D-pad navigable. |
+| 11/10 | LED des joycons ; `Settings.apk` rétabli en réactivant le réseau dans `services.jar`. |
+| 12/10 | Clavier Leanback pilotable au D-pad : `framework.jar` corrigé, touches agrandies. |
 | 12–13/10 | HDMI/RGA, builds M19→M33, rotation logicielle, logo paysage. |
 | 13–14/10 | Mode souris R1+R2 + stick droit, `mouse_daemon`, Mouse OSD, démarrage auto. |
 | 19/10 | Mesures DVFS GPU/CPU, aucune modification persistante. |
@@ -35,9 +37,10 @@ Sources : les journaux de travail `STATE.md` / `STATE.MD` tenus sur la machine d
 | 06/11 | `sjgam_touchd` puis désactivation finale du pont clic→tactile. |
 | 09–24/11 | Frontend SJGAM itéré jusqu'au menu APKS 7 colonnes retenu. |
 | 20–24/11 | Stubs Google/Vending ; billing conservé pour Riptide GP2 ; 5 stubs désactivés. |
+| 23/11 | Service `search` restauré dans `services.jar` (MX Player) ; port de M.A.X. en cours (annexe). |
 | 22–24/11 | Port de M.A.X. : JNI/chemins SD, rendu 640×480 étiré, mapping, IA d'origine, watchdog audio, langue française. |
 | 24/11 | Archive firmware `sjgam-m27-custom-20261124.zip`, nettoyage console, mappings DraStic, dépôt GitHub créé. |
-| 25/11 | Diagnostic d'une assertion SDL d'origine dans l'autosave de M.A.X. (travaux en cours, détail en Partie IV). |
+| 25/11 | Diagnostic d'une assertion SDL d'origine dans l'autosave de M.A.X. (travaux en cours, détail en Annexe B). |
 
 ## Partie I — Noyau, pilotes et souris (07/10 → 24/11)
 
@@ -213,7 +216,139 @@ Source : `/var/mnt/stockage/sjgamM27/kernelbuild/STATE.md` (3393 lignes, lu int�
 - Dates de build12 (19:07:48 CEST) et de quelques builds M14/M21 sont déduites de leur position dans le journal ; l'année n'est pas explicitement répétée à chaque ligne (2026 d'après le contexte).
 - Aucune donnée de jeu ni contenu binaire n'a été inclus volontairement ; seuls les chemins, codes de touches, types de périphériques et checksums nécessaires à l'historique technique ont été conservés.
 
-## Partie II — Port de M.A.X. sur SJgam M27 (22/11 → 24/11)
+## Partie II — Système Android : `Settings.apk` et clavier virtuel (11/10 → 12/10, suite 23/11)
+
+Ces deux chantiers sont au cœur de la console : ils rendent le système réellement utilisable sans dalle tactile. Ils ne concernent ni le port M.A.X., ni les jeux.
+
+### `Settings.apk` : réimplémentation / remise en service (11/10, puis 23/11)
+
+- **Symptôme** : l'APK `Settings.apk` de Kingston, placé dans `/system/priv-app`, s'installait bien (`codePath=/system/priv-app/Settings.apk`, flags `PRIVILEGED`) mais plantait dès l'ouverture.
+- **Diagnostic logcat** : `NullPointerException` dans `com.android.settings.Settings.updateHeaderList(Settings.java:587)`. `ServiceManager.getService("network_management")` renvoyait `null`, puis l'appel à `INetworkManagementService.isBandwidthControlEnabled()` levait l'exception (le `try/catch` ne couvrait que `RemoteException`, pas le NPE).
+- **Cause racine** : dans `/system/framework/services.jar`, la classe `com.android.server.ServerThread` (méthode `initAndLoop`) avait le réseau coupé en dur par la ROM « root » : `SystemProperties.set("config.disable_network", "true")` et `const/16 v86, 0x1` (`disableNetwork=true`). Le branchement correspondant sautait tout le bloc réseau : `NetworkManagement`, `NetworkStats`, `NetworkPolicy`, Wi-Fi P2P, Wi-Fi, `Connectivity`, Ethernet et `Nsd` n'étaient jamais démarrés. La ROM Kingston d'origine lisait `config.disable_network` avec `false` par défaut, d'où la différence de comportement.
+- **Correctif appliqué** : décompilation de `services.jar` avec baksmali 3.0.10, patch de `ServerThread.smali` (`0x1` → `0x0` et chaîne `"true"` → `"false"`), réassemblage du `classes.dex`, remplacement dans une copie du jar, push vers `/system/framework/services.jar` (droits 644, `root:root`), purge du dex cache dalvik puis reboot. Le jar du bootclasspath n'est pas vérifié par signature, ce qui rend le patch possible.
+- **Résultat** : après redémarrage, `network_management`, `connectivity`, `netpolicy`, `netstats`, `wifi`, ethernet et `servicediscovery` sont de nouveau enregistrés. `Settings.apk` est remis en place dans sa version **Kingston d'origine, non modifiée** ; `am start com.android.settings/.Settings` affiche l'activité en ~636 ms, sans `FATAL`.
+- **Contrainte de signature** : la clé plateforme de la ROM est personnalisée (SHA-256 `71:5E:B4:D7:4F:69:A4:26:A5:CC:8E:57:C6:D8:B5:28:CC:49:67:D0:B3:50:20:05:AA:AF:23:AA:EB:50:75:90`), différente des `test-keys` AOSP. Toute application en `sharedUserId=android.uid.system` (Settings, SystemUI, Keyguard…) doit rester **non resignée** : sinon `PackageManager` rejette le paquet avec `Signature mismatch for shared user android.uid.system`. Une tentative `Settings_v1_aligned.apk` resignée a été rejetée ; l'APK d'origine a été conservé.
+- **Suite le 23/11** : MX Player plantait faute de service `search`. Les classes `SearchManager` / `ISearchManager` (`framework.jar`) et `SearchManagerService` (`services.jar`) existaient déjà ; il manquait seulement l'enregistrement dans `ServerThread`. Patch smali (`ServiceManager.addService("search", new SearchManagerService(mContext))` après le bloc Clipboard, avec `try/catch reportWtf`), réassemblage `--api 19`, push du jar et purge du cache. Vérification : `service list` montre `search`, `dumpsys search` voit MX Player, aucun `FATAL EXCEPTION` au test de recherche. Sauvegardes : `BACKUPS/2026-11-23-search-service/` sur PC et `/mnt/internal_sd/services.jar.pre-search` sur la console.
+- **Précision de vocabulaire** : ici, « réimplémentation » signifie remettre en service l'APK d'origine et réparer le framework système qui l'empêchait de fonctionner — pas réécrire l'application Settings. Aucun code d'application n'a été réécrit.
+
+### Clavier virtuel : de l'affichage à la navigation au D-pad (11/10 → 12/10)
+
+- **État initial** : la ROM n'avait aucun clavier fonctionnel. `default_input_method` pointait vers `com.ndcsolution.androidtv.leankeykeyboard/.LeanbackImeService`, qui n'était pas installé (APK retiré au debloat) : aucune saisie possible.
+- **Premier palliatif** : installation de `LatinIME.apk` dans `/system/app`, `ime enable` + `ime set`, `enabled_input_methods` corrigé. Le clavier s'affichait et répondait (`mCurMethodId=LatinIME`, `mHaveConnect=true`), vérifié par capture du framebuffer. Mais cet IME n'est pas navigable au D-pad, alors que la console n'a pas d'écran tactile.
+- **Choix retenu** : `com.google.android.leanback.ime` v1.0.2.2423292 (minSdk 16), service `com.google.leanback.ime.LeanbackImeService`, installé dans `/system/app/LeanbackIme.apk` (md5 source `234d5eeebfbc33763b3690a0d1d592bc`). `com.android.inputmethod.leanback` (min API 35) est inutilisable sur API 19 (`Requires newer sdk version #35`). `LatinIME` est conservé en secours provisoirement.
+- **Fausse piste documentée** : la fenêtre IME porte `FLAG_NOT_FOCUSABLE` (`fl=#1800108`). Une première hypothèse attribuait à ce flag l'absence de navigation. Un patch smali de `LeanbackImeService` ajoutant `makeWindowFocusable()` (`clearFlags(0x8)` + `requestFocus`) retirait bien le flag (`fl=#1800100`) mais cassait l'état de l'IME (`mHasSurface=false`, `isReadyForDisplay=false`, `mInputShown=false`) : le clavier ne s'affichait plus. L'APK d'origine a été restauré et l'hypothèse écartée.
+- **Cause racine réelle (12/10)** : dans le `framework.jar` de la ROM, la méthode `android.view.ViewRootImpl$ImeInputStage.onProcess(QueuedInputEvent)I` était **neutralisée** : elle ne faisait que `return 0` (`FORWARD`). Les touches n'étaient donc jamais proposées à l'IME, quel que soit le clavier installé. Toute la machinerie autour était saine (`dispatchInputEvent`, `ImeInputEventReceiver`, `IInputMethodSessionWrapper`, `onFinishedInputEvent`).
+- **Preuve** : instrumentation temporaire de `Leanback.onKeyDown` avec un log `KBDTEST` — jamais déclenché avant le patch, déclenché à chaque touche après.
+- **Correctif** : restauration de la logique AOSP KitKat de `onProcess` dans `framework.jar` via smali : si `mLastWasImTarget && !isInLocalFocusMode()`, appeler `InputMethodManager.peekInstance().dispatchInputEvent(...)` ; `FINISH_HANDLED` (1), `FINISH_NOT_HANDLED` (2), `DEFER` (3), sinon `FORWARD` (0). La méthode `isInLocalFocusMode()` étant privée, l'accesseur synthétique `ViewRootImpl.access$700()` est utilisé. Piège rencontré et corrigé : la première version testait `if-eqz` (condition inversée), d'où un branchement permanent vers `FORWARD` ; correction en `if-nez`.
+- **Validation fonctionnelle** : avec l'APK instrumenté, les logs `KBDPATCH` montrent `res=IN_PROGRESS` (DEFER), puis la lecture live de l'`EditText` confirme `LEFT` puis `CENTER` → `r`, `RIGHT` puis `CENTER` → `t` : la flèche déplace bien la sélection et le centre valide la touche. La manette physique est cohérente : `rk29-keypad` mappe A sur `BUTTON_A` (96), et `getSimplifiedKey()` du Leanback mappe déjà `BUTTON_A` → `DPAD_CENTER` et `BUTTON_B` → `BACK` — aucun remappage de touches n'était nécessaire.
+- **Piège de capture** : le clavier n'apparaît pas dans `/dev/graphics/fb0` : la fenêtre IME est composée en overlay matériel sur RK3188 (`mShownFrame=[0,366][1024,600]`, `layer=21010`) alors que le framebuffer ne contient que la couche applicative. Les validations visuelles du clavier ne peuvent donc pas se faire par capture `fb0` sur cette ROM.
+- **Finition** : agrandissement des touches sans `apktool`, par patch binaire de `resources.arsc` (type `dimen`, encodage `dp*256 | 0x01`) : `key_height` 28→44 dp et `key_width` 28→60 dp. La fenêtre IME passe de 234 à 330 px de haut et le clavier d'environ 428 à 780 px de large. Une marge à droite est conservée pour le bouton « Next » (ne pas dépasser ~70 dp).
+- **Nettoyage** : retrait des logs temporaires `KBDPATCH` du framework et `KBDTEST` de l'IME. `framework_clean.jar` md5 `41a4adb67874252b71bf33827b894e56` est poussé sur la console. `LatinIME.apk` est supprimé (backup md5 `68e8367b9290e30413d126dcde1c0c89`), son dex cache et ses données purgés : Leanback devient le seul IME actif et par défaut.
+- **État final vérifié après reboot à froid** : `sys.boot_completed=1`, `framework.jar` propre, paquet `com.android.inputmethod.latin` absent, `default_input_method = enabled_input_methods = Leanback`. Saisie persistante validée (texte saisi puis étendu via `DPAD_CENTER` après redémarrage). Le `NullPointerException` préexistant de `com.google.process.location` (localisation coupée en dur) reste inchangé et sans lien avec le clavier.
+- **Précision de vocabulaire** : l'IME n'a pas été réécrit depuis zéro. Le travail a consisté à réparer le framework (réactivation de la distribution des touches), puis à patcher l'IME existant au niveau de ses ressources et de son code smali, avec restores systématiques des versions d'origine.
+
+## Partie III — Frontend, émulation, stubs et packaging (10/10 → 24/11)
+
+### Contexte initial, objectifs et règles de conservation (date non documentée ; document arrêté au 2026-10-27)
+- Matériel : RK3188, 512 Mo de RAM, écran 7" non tactile (1024×600 en paysage), 24 entrées physiques vues par Android comme un clavier, batterie 3000 mAh, slot SD, switch ON/OFF coupant la batterie, pas de Wi-Fi/Bluetooth/ADB/recovery d'origine.
+- Deux consoles : console 1 à NAND, écran endommagé lors du démontage, kernel sans gadget USB, réserve de pièces ; console 2 à boot SD obligatoire, kernel avec gadget USB mais dossier `adbd` vide, retenue comme base de travail.
+- État d'origine : Android 4.4 AOSP verrouillé par SJGAM, frontend propriétaire au premier plan englobant interface, RetroArch et PPSSPP, quelques émulateurs natifs ; Android inaccessible, quickmenu pauvre, roms non dynamiques (suppression d'un `.DB` à la racine SD nécessaire).
+- Objectifs : système ouvert avec installation d'APK depuis la SD, launcher type MediaBox personnalisé (icônes de plateformes, liste de roms à gauche, aperçu PNG à droite avec image par défaut), émulation aussi large que le RK3188 le permet, performances acceptables, souris virtuelle R1+R2, joycon droit indépendant, APK2SD, configs libretro persistantes, système léger et firmware flashable via outils Rockchip.
+- Doute : la durée du chord R1+R2 est indiquée comme 3 s dans le document de projet et 5 s dans les toutes premières notes ; 3 s est la valeur retenue ensuite.
+- Règle stricte : dumps originaux des partitions des deux consoles et images SD = lecture seule, jamais altérés ; extraire dans un dossier si besoin.
+
+### Premiers accès ADB/root, dumps et transferts (2026-10-07 → 2026-11-03)
+- Date non documentée pour le tout premier accès ADB/root ; première preuve datée : 2026-10-07, boot du kernel build9, `adbd` root, `/dev/android_adb` et gadget `f_adb` opérationnels.
+- 2026-10-07 : flash de récovery p3 (kernel build9), p4 sauvegardé puis réécrit à l'identique (md5 `5da0f206ca49f13bb5b7165ea73f82c2`), p10 zeroisé, reboot laissé à l'utilisateur.
+- 2026-10-07 → 08 : plusieurs builds successifs pour affichage/dalle ; le build13 est validé le 08/10 (logo et launcher nets) puis conservé comme référence de rollback.
+- 2026-10-10 : découverte que les 24 contrôles passent par `rk29-keypad` (GPIO), pas par la manette USB ; cartographie complète des entrées établie et keylayouts corrigés sans flash supplémentaire.
+- 2026-10-10 → 11 : LED/RGB des joycons pilotables via gpio169 et application `SJGAM Control` créée, anglaisée puis promue en app système `/system/app/SJGAMControl.apk` (md5 `218818287c0500ec985bdaba42bb5b7f`), données conservées.
+- 2026-10-11 : lot de 7 APK système d'origine (Kingston) transférés par `adb push` vers `/system/app` et `/system/priv-app` (MediaProvider, CalendarProvider, DownloadProvider, WallpaperCropper, DownloadProviderUi, DocumentsUI, LatinIME), md5 local = md5 console, reboot et vérification `pm path`.
+- 2026-10-19 : traducteur clic-souris → appui tactile installé (`/system/bin/sjgam_touch_daemon.sh`) car les jeux Unity ignorent `BTN_LEFT`.
+- 2026-10-23 : dumps console 2 enregistrés sous `DUMPS & SAVES/dumps originaux m27 pcb r10 v2.2/` (dont `system_adb_20261023.img`, `boot_adb_patch_20261023.img`, logs de flash).
+- 2026-10-26 : image brute complète de la carte SD usine (52,1 Go) sauvegardée avec SHA-256 et copie zstd dans `DUMPS & SAVES/factory sdcard m27 r10v2.2/`, lecture seule.
+- 2026-10-27 : architecture retenue = développement sur console 2 (boot SD, ADB, itérations sans risque de brick), migration NAND uniquement en fin de projet ; `/data` saturé (~11,7 Mo libres), la SD reste le support de données.
+- 2026-11-03 : image `DUMPS & SAVES/factory sdcard M27 r10v2.3.img` archivée.
+- Note : les détails de builds/flash kernel sont traités dans l'historique noyau séparé.
+
+### Souris virtuelle et firmware associé (2026-10-13 → 2026-11-21)
+- 2026-10-13 : projet « souris via stick droit » : R1+R2 maintenus bascule le mode, stick droit = déplacement, R1 = clic gauche, R2 = clic droit, daemon userspace via `/dev/uinput`.
+- 2026-10-13 : M33 donne des codes dédiés aux sticks (183..190) pour distinguer stick droit et ABXY ; R1 physique = 295, R2 = 293, keylayout usine corrigé sans flash.
+- 2026-10-13/14 : premier daemon `/data/local/tmp/mouse_daemon` validé ; OSD `com.sjgam.mouseosd` affiche les toasts ON/OFF ; correctif `umask 0` dans `/system/bin/sjgam_mouse.sh` pour que `/dev/sjgam_mouse` soit lisible par l'OSD.
+- 2026-10-14 : validation utilisateur « impec ça fonctionne nikel » ; l'absence de toast après reboot était un problème de timing (bascule avant le démarrage du service BOOT_COMPLETED), pas un bug.
+- 2026-11-06 : traducteur clic→tap restauré puis remplacé par `sjgam_touchd` en C (uinput direct, drag & drop, chord court annulé) ; décision finale : clic souris seul, tactile désactivé (le tap perturbait MediaBox et le menu DraStic).
+- 2026-11-20 : clic droit du daemon converti en `KEYCODE_BACK` par le framework Rockchip ; tentative de patch `android.policy.jar` abandonnée, framework remis à l'origine (`android.policy.jar.orig`, md5 `ff2c543f...`) et reboot.
+- 2026-11-20 : OSD corrigé (libellés inversés, toast au premier poll) puis archivé `WORKING/SJGAMMouseOSD-mode-fixed.apk`.
+- 2026-11-21 : déplacement fluide (boucle 10 ms, accumulateur sous-pixel) ; correction uinput RK3188 (un seul `input_event` par `write()`, 3 writes REL_X/REL_Y/SYN_REPORT), validation utilisateur « ha oui ! la c'est beau, c'est propre ! ».
+- 2026-11-21 : binaire `/system/bin/mouse_daemon` md5 `5fbeaecc3805a2a6de8c863b6916c631`, réglage à chaud `/data/local/tmp/sjgam_mouse_speed` (facteur 1/128, bornes 32..320), sauvegarde `/mnt/internal_sd/mouse_daemon.pre-smooth`.
+- 2026-11-21 : toasts OSD passés en anglais par patch DEX en place (tailles égales, signature/checksum DEX recalculés, même clé debug), `WORKING/SJGAMMouseOsd-i18n.apk` md5 `927623418e6ec2dc413e42e220726579`.
+- 2026-11-23 : combo START+SELECT 3 s greffé sur `sjgam_touchd` pour force-stop de l'app au premier plan, avec toast OSD `App stopped: <pkg>` ; binaire md5 `0c1784a2e446abf59f1c5effb9343380`, APK md5 `7dc0df3a847c975746acd66a7bd0cc1e`.
+- 2026-11-24 : la souris firmware (rk29-mouse + `mouse_daemon` + Mouse OSD) est confirmée comme seul mécanisme : aucun chord dans le port MAX et aucun pont tactile ajouté.
+
+### Cores libretro et jalon GBA/mGBA (2026-11-02 → 2026-11-04)
+- 2026-11-02 : sources mGBA disponibles, build Android NDK r15c (API 19, armeabi-v7a) préparé en secours.
+- 2026-11-03 : les cores buildbot officiels (NDK r29, API 21) échouent sur Android 4.4 (`__strncpy_chk2` etc.) ; les cores SJGAM de la SD ne sont pas chiffrés, seuls les 32 premiers octets de l'en-tête ELF sont remplacés et reconstructibles.
+- 2026-11-03 : core mGBA SJGAM récupéré installé par défaut dans `/data/data/com.retroarch.ra32/cores/mgba_libretro_android.so` (md5 `790f7ef47f732fd96a2012c8cdc01a51`) ; secours r15c md5 `db27aec1f45d4d67362b3a665d0cc352`.
+- 2026-11-03 : validation utilisateur sur 4 roms GBA (sans modification des dumps/roms), géométrie 240×160, audio OpenSL actif, ~83 Mo RSS ; Snes9x SJGAM (md5 `e1d8df49fa53fdc15166c172ed69bc6a`) également validé en jeu.
+- 2026-11-03 : `com.emu` (cible d'origine du frontend SJGAM) reste bloqué avant affichage ; ne pas y consacrer de temps, passer par `com.retroarch.ra32`.
+- 2026-11-04 : 23 cores ARM32 utiles installés dans le dossier privé RetroArch (UID 10042, modes 755), ~126 Mio, MD5 identiques aux originaux SJGAM ; validation en jeu limitée à mGBA, Snes9x et MAME 2003 Plus, les autres restant vérifiés statiquement.
+- Doute : les deux cores Desmume récupérés sont AArch64 et incompatibles avec la M27.
+
+### Frontend SJGAM et menu APKS (2026-11-02 → 2026-11-24)
+- 2026-11-02 : frontend hybride (base MediaBox + navigateur de roms) retenu, avec conservation du scanner de plateformes et des lanceurs.
+- 2026-11-09 : v0.2 : accueil refait en mosaïque 1280×720 adaptée à 1024×600, tuiles RetroArch/Mes applications/Paramètres/Total Commander/Clean RAM, bandeau de plateformes depuis `/mnt/external_sd/iroms` ; v0.3 : passage à `com.retroarch.ra32` + cores internes ; v0.4 : frise façon carousel.
+- 2026-11-12 → 13 : v0.5/0.6 (jeux récents, scan corrigé, miniatures), puis v0.7 → 0.36 (plates-formes manquantes, thème UI, icônes insensibles à la casse, fonds par plateforme, réglages de la frise et de LAST GAMES).
+- 2026-11-15 : v0.37 → 0.95 : habillage (boîtier DVD, transparences, ombres, jaquette inclinée, `NoPreview.png`), renommage GBA, direct intent DraStic (v0.83, `ACTION_VIEW` + `Uri.fromFile`), touche Retour ignorée (v0.95).
+- 2026-11-16 : v1.0 → 1.24 : intégration de SJGAM Control, contrôle CPU ajouté puis retiré, interface anglaise, tuiles et panneaux ajustés, 8 colonnes dans « Mes applications », orientation paysage forcée.
+- 2026-11-17 : v1.05 : `RomLauncher.standaloneIntent()` étendu à tous les émulateurs APK autonomes (DraStic, Mupen64Plus AE, Flycast, PPSSPP) ; validation NDS/N64/PSP, Flycast v2.5 patché (`Uri.getPath()`), BIOS Dreamcast ajoutés et réglages performance appliqués.
+- Doute : la numérotation n'est pas monotone dans les sources (v1.24 le 16/11, v1.05 le 17/11) ; les deux versions coexistent dans les journaux, sans explication explicite.
+- 2026-11-19 : MediaBox Launcher désinstallé après sauvegarde `WORKING/mediaboxlauncher-installed-before-removal.apk` ; le frontend SJGAM devient le seul launcher HOME.
+- 2026-11-20 : frontend et Mouse OSD déplacés vers `/system/app/SJGAMFrontend.apk` et `/system/app/SJGAMMouseOsd.apk` pour être masqués de la grille ; préférences restaurées (`recent_roms.xml`, `rom_inventory.xml`), grille « Apps » réduite à 10 entrées ; mise à jour future = remplacer l'APK système + reboot, pas `adb install -r`.
+- 2026-11-23 : service système `search` restauré dans `services.jar` (patch `ServerThread`) pour corriger le force-close de MX Player ; sauvegardes `BACKUPS/2026-11-23-search-service/`.
+- 2026-11-24 : confusion 6/7 colonnes dans le menu APKS (`MyAppsActivity`) : le build déployé `d02dbe9e...` (versionCode 122) avait 6 colonnes, le build de travail `a1641ac1...` (versionCode 124) en avait 7.
+- 2026-11-24 : après correction de l'interprétation par l'utilisateur (« c'est la 7 colonnes qui est le correctif »), le build 7 colonnes est réinstallé dans `/data/app` et validé visuellement dans le menu APKS ; l'archive firmware reste sur 6 colonnes par décision de reporter la reconstruction.
+
+### Stubs Google/Vending et billing Riptide (2026-11-20 → 2026-11-24)
+- 2026-11-20 : Riptide GP2 plantait sur `IabHelper.startSetup` car `com.android.vending` absent ; stub AIDL `com.android.vending.billing.InAppBillingService.BIND` (13 Ko) répondant `BILLING_UNAVAILABLE` (code 3), sans patcher le jeu.
+- 2026-11-20 : stub installé en `/system/app/VendingStub.apk` (root:root 644) pour être invisible dans la grille du frontend ; reboot vérifié, jeu démarré, `/system` remis en lecture seule, archive `WORKING/VendingBillingStub.apk`.
+- 2026-11-23 : 20 stubs de présence fabriqués (`STUBS/`, DEX minimal obligatoire sinon dexopt échoue) puis, à la demande de l'utilisateur, 14 stubs réseaux sociaux/navigateurs/Amazon supprimés.
+- 2026-11-23 : 6 stubs conservés : VendingStub, GmsStub, GsfStub, PlayGamesStub, YouTubeStub, GoogleSearchStub ; limites documentées : présence uniquement, pas de sign-in/achats/SafetyNet (microG nécessaire pour de vraies API).
+- 2026-11-24 : 5 stubs désactivés par `pm disable` (GMS, GSF, Play Games, YouTube, Google Search), VendingStub conservé car il fait fonctionner Riptide GP2 ; sauvegardes `DUMPS & SAVES/stubs-cleanup-20261124/`, suppression physique non appliquée.
+- 2026-11-24 : Drift Zone 2 affiche « Google Play Store signature invalid » (stub signé avec la clé debug) : aucun stub ne peut corriger cela sans patcher le jeu ou installer un vrai Play Store.
+
+### DraStic : mappings A/B, L2, joycon gauche, souris firmware (2026-11-24)
+- 2026-11-24 : A et B inversés dans DraStic (`_KeyMapConfigs_0_2/0_3` dans `/data/data/com.dsemu.drastic/shared_prefs/_Dra$t1c_Pref$_.xml`) ; échange 4↔23 appliqué après arrêt de l'app, validation « c'est mieux », sauvegarde `DUMPS & SAVES/drastic-ab-fix-20261124/prefs-avant.xml`.
+- 2026-11-24 : `.ui.Settings` s'ouvre sans crash ; le plantage survient seulement lors d'une navigation dans le panneau, non reproduit dans la séquence journalisée.
+- 2026-11-24 : passage dans `.ui.KeyMapper` réécrit le XML et rétablit l'ancien mapping A/B ; correctif réappliqué après `force-stop` ; avertissement : toute passe dans le KeyMapper UI écrase le correctif.
+- 2026-11-24 : L2 = Open Menu (index 20 = keycode 104 `BUTTON_L2`) écrit directement dans les préférences, validation « impec ca marche », cohérent avec L1=102/R1=103 et le mapping du port MAX.
+- 2026-11-24 : joycon gauche assigné à Screen-swap (index 16 = 198), Fast forward (index 17 = 196) et 1/2 Screen Swap (index 25 = 199), identification par corrélation `getevent -l -t` / logcat, validation « c'est nikel ».
+- 2026-11-24 : aucun keylayout système modifié pour ces réglages ; la souris firmware permet les appuis à l'écran, aucune souris virtuelle supplémentaire ajoutée.
+
+### Packaging de l'archive firmware (2026-11-24)
+- 2026-11-24 : création du dossier `PACKAGING/` (`MANIFEST.md`, `stage/`, 30 fichiers, `FILES.txt`, `MD5SUMS.txt`) ; règle retenue : la source de vérité est l'état réellement déployé et validé sur la console, pas les copies de travail.
+- 2026-11-24 : divergences corrigées côté Linux : code frontend resynchronisé sur la version déployée (à ce moment 6 colonnes), `TOOLS/sjgam_mouse.sh` (md5 `e9b6bd761db9ee845f0e64eb153d4081`) et `TOOLS/sjgam_touchd.arm` (md5 `0c1784a2e446abf59f1c5effb9343380`).
+- 2026-11-24 : décision utilisateur : archive flashable Rockchip avec « tout le valide, hors données de jeu » ; création de `PACKAGING/rockchip-m27-custom/` et `PACKAGING/sjgam-m27-custom-20261124.zip`.
+- 2026-11-24 : archive de 231 399 853 octets, md5 `4ac17e4c7c14d56ae206dceb86361140`, `unzip -t` OK ; sources du Mouse OSD incluses (`rebuild-mouseosd.sh` produisant un DEX identique md5 `98838ca8...`).
+- 2026-11-24 : images packées : `parameter` (1024 o), `kernel.img` (M38 rempli à 12 Mo), `boot.img` usine (md5 `5da0f206ca49f13bb5b7165ea73f82c2`), `recovery.img` (md5 `7aac2177...`), `misc.img` (md5 `cf4825bb...`), `system.img` ext4 brut (805 306 368 o, md5 `af895a12...`).
+- 2026-11-24 : `system.img` = dump usine + 19 fichiers validés écrits via `debugfs` ; `e2fsck -fn` propre, 1188 fichiers identiques à la console, un seul APK de jeu ajouté dans `/system/app` ; delta = 6 fichiers modifiés + 13 ajoutés, 75 liens symboliques identiques.
+- 2026-11-24 : `flash.sh` (bash -n OK) : reconnaissance + backup par défaut, `--write` (kernel/boot/recovery/system puis relecture et `cmp`), `--restore`, contrôle des frontières `KRNL` à 0x4000 et 0xa000 ; pas de formatage de `userdata`/`cache`, pas d'écriture SD, aucun loader distribué.
+- 2026-11-24 : rien n'a été flashé ni modifié sur la console à ce stade ; points ouverts avant fabrication : format de distribution, périmètre exact, script de reconstruction du Mouse OSD.
+
+### Nettoyage de la console et fin de session (2026-11-24)
+- 2026-11-24 : sauvegarde complète de `/data/local/tmp` avant nettoyage (`DUMPS & SAVES/console-cleanup-20261124/data-local-tmp/`, 135 fichiers, 25 Mo, `MD5SUMS.txt` md5 `86793897f1aa7438b6a868287a17211a`).
+- 2026-11-24 : 125 fichiers temporaires supprimés (captures framebuffer ~21 Mo, copies de stubs, anciens OSD, diagnostics, vidéos de test, anciens binaires/scripts) ; `/data/local/tmp` passe de 24,7 Mo à 1,5 Mo.
+- 2026-11-24 : conservés : `sjgam_mouse_speed`, `sjgam_touchd.pid/.log`, `mouse_daemon.log`, `mouse_daemon_autostart.log`, `settings.ini.bak-italian`, `services_patched.jar`, `sd_boot.bin`, `usbmark_hook`, `ctsScreenShot/`.
+- 2026-11-24 : vérifications post-nettoyage : noyau #38, keylayout `29fb5f55...`, apps présentes, `mouse_daemon` (pid 757) et `sjgam_touchd` (pid 758) actifs ; aucune donnée de jeu/SD/rom touchée.
+- 2026-11-24 : tentative de remplacement du frontend 7 colonnes par le 6 colonnes puis correction de l'interprétation ; retour au build `a1641ac1...` via `adb install -r` (upgrade), sauvegarde de la version 6 colonnes dans `DUMPS & SAVES/frontend-7col-20261124/`.
+- 2026-11-24 : fin de session « on stop la » : aucun flash, aucun reboot forcé, aucune autre modification ; console en frontend 7 colonnes, DraStic corrigé, 5 stubs désactivés, souris firmware intacte.
+- 2026-11-24 : archive inchangée (6 colonnes, 6 stubs) ; à reprendre : tests Riptide GP2 (billing), Drift Zone 2, MX Player (recherche) et menu APKS, puis une seule reconstruction de l'archive après validation.
+- 2026-11-24 : nouveau dépôt GitHub accessible en écriture `git@github.com:wisittheunknow-sys/Sjgam-m27-Unclock.git`, clone local `/var/mnt/stockage/sjgamM27/Sjgam-m27-Unclock`, clé `~/.ssh/id_ed25519_m27`, commit `ab370a6` (README + .gitignore, sans données de jeu ni binaires).
+- 2026-11-24 : tâche HISTORY.md demandée mais reportée au lendemain ; trois agents d'extraction ont produit `/tmp/opencode/history-{kernel,max,global}.md` (sorties périssables, à régénérer si absentes) ; ne pas copier les journaux bruts dans le dépôt (mot de passe de keystore local).
+- Périmètre : le port M.A.X. est détaillé en Annexe A et le noyau/pilotes en Partie I ; cette partie se limite au frontend, à l'émulation, aux stubs et au packaging. Les deux chantiers système sont développés en Partie II.
+
+## Annexe A — Port de M.A.X. sur SJgam M27 (22/11 → 24/11)
+
+Annexe : travail annexe à la console, conservé ici pour mémoire et reproductibilité. La console reste le sujet principal (Parties I à III).
 
 
 Source unique : `/var/mnt/stockage/sjgamM27/projet MAX/STATE.MD` (1280 lignes, lu intégralement). Aucune donnée de jeu ni contenu binaire n'est repris ici : seuls les chemins, les quantités, les décisions et les résultats sont conservés. Les doutes sont signalés explicitement en fin de document.
@@ -426,122 +561,7 @@ Source unique : `/var/mnt/stockage/sjgamM27/projet MAX/STATE.MD` (1280 lignes, l
 - L'ancien inventaire ISO (« 111 fichiers / 110,7 Mo ») est explicitement faux et remplacé par 1 075 fichiers / 637 053 313 octets ; ne pas conserver l'ancien chiffre.
 - Plusieurs actions du 24/11 sont hors périmètre MAX (frontend, Drastic, LMK, nettoyage) et certaines ont été annulées/reprises : elles sont relatées pour contexte, sans lien avec l'APK du port ni avec les mappings.
 
-## Partie III — Système, frontend, émulation, stubs, packaging (10/10 → 24/11)
-
-### Contexte initial, objectifs et règles de conservation (date non documentée ; document arrêté au 2026-10-27)
-- Matériel : RK3188, 512 Mo de RAM, écran 7" non tactile (1024×600 en paysage), 24 entrées physiques vues par Android comme un clavier, batterie 3000 mAh, slot SD, switch ON/OFF coupant la batterie, pas de Wi-Fi/Bluetooth/ADB/recovery d'origine.
-- Deux consoles : console 1 à NAND, écran endommagé lors du démontage, kernel sans gadget USB, réserve de pièces ; console 2 à boot SD obligatoire, kernel avec gadget USB mais dossier `adbd` vide, retenue comme base de travail.
-- État d'origine : Android 4.4 AOSP verrouillé par SJGAM, frontend propriétaire au premier plan englobant interface, RetroArch et PPSSPP, quelques émulateurs natifs ; Android inaccessible, quickmenu pauvre, roms non dynamiques (suppression d'un `.DB` à la racine SD nécessaire).
-- Objectifs : système ouvert avec installation d'APK depuis la SD, launcher type MediaBox personnalisé (icônes de plateformes, liste de roms à gauche, aperçu PNG à droite avec image par défaut), émulation aussi large que le RK3188 le permet, performances acceptables, souris virtuelle R1+R2, joycon droit indépendant, APK2SD, configs libretro persistantes, système léger et firmware flashable via outils Rockchip.
-- Doute : la durée du chord R1+R2 est indiquée comme 3 s dans le document de projet et 5 s dans les toutes premières notes ; 3 s est la valeur retenue ensuite.
-- Règle stricte : dumps originaux des partitions des deux consoles et images SD = lecture seule, jamais altérés ; extraire dans un dossier si besoin.
-
-### Premiers accès ADB/root, dumps et transferts (2026-10-07 → 2026-11-03)
-- Date non documentée pour le tout premier accès ADB/root ; première preuve datée : 2026-10-07, boot du kernel build9, `adbd` root, `/dev/android_adb` et gadget `f_adb` opérationnels.
-- 2026-10-07 : flash de récovery p3 (kernel build9), p4 sauvegardé puis réécrit à l'identique (md5 `5da0f206ca49f13bb5b7165ea73f82c2`), p10 zeroisé, reboot laissé à l'utilisateur.
-- 2026-10-07 → 08 : plusieurs builds successifs pour affichage/dalle ; le build13 est validé le 08/10 (logo et launcher nets) puis conservé comme référence de rollback.
-- 2026-10-10 : découverte que les 24 contrôles passent par `rk29-keypad` (GPIO), pas par la manette USB ; cartographie complète des entrées établie et keylayouts corrigés sans flash supplémentaire.
-- 2026-10-10 → 11 : LED/RGB des joycons pilotables via gpio169 et application `SJGAM Control` créée, anglaisée puis promue en app système `/system/app/SJGAMControl.apk` (md5 `218818287c0500ec985bdaba42bb5b7f`), données conservées.
-- 2026-10-11 : lot de 7 APK système d'origine (Kingston) transférés par `adb push` vers `/system/app` et `/system/priv-app` (MediaProvider, CalendarProvider, DownloadProvider, WallpaperCropper, DownloadProviderUi, DocumentsUI, LatinIME), md5 local = md5 console, reboot et vérification `pm path`.
-- 2026-10-19 : traducteur clic-souris → appui tactile installé (`/system/bin/sjgam_touch_daemon.sh`) car les jeux Unity ignorent `BTN_LEFT`.
-- 2026-10-23 : dumps console 2 enregistrés sous `DUMPS & SAVES/dumps originaux m27 pcb r10 v2.2/` (dont `system_adb_20261023.img`, `boot_adb_patch_20261023.img`, logs de flash).
-- 2026-10-26 : image brute complète de la carte SD usine (52,1 Go) sauvegardée avec SHA-256 et copie zstd dans `DUMPS & SAVES/factory sdcard m27 r10v2.2/`, lecture seule.
-- 2026-10-27 : architecture retenue = développement sur console 2 (boot SD, ADB, itérations sans risque de brick), migration NAND uniquement en fin de projet ; `/data` saturé (~11,7 Mo libres), la SD reste le support de données.
-- 2026-11-03 : image `DUMPS & SAVES/factory sdcard M27 r10v2.3.img` archivée.
-- Note : les détails de builds/flash kernel sont traités dans l'historique noyau séparé.
-
-### Réinimplémentation / remise en service de Settings.apk (2026-10-11)
-- Pourquoi : la ROM « root » installait bien `Settings.apk` mais l'ouverture plantait (`NullPointerException` dans `Settings.updateHeaderList`) car `network_management` n'était pas enregistré : le service réseau était coupé en dur dans `services.jar` (`config.disable_network=true`).
-- Comment : patch smali de `com.android.server.ServerThread` (disableNetwork 1 → 0, propriété `false`), réassemblage du `classes.dex`, push de `/system/framework/services.jar`, purge du dalvik-cache, reboot ; les services network/connectivity/wifi sont revenus.
-- Quoi : `Settings.apk` d'origine Kingston, non modifié, remis dans `/system/priv-app/Settings.apk` ; ouverture validée (`com.android.settings/.Settings`, aucun FATAL).
-- Contrainte clé : clé plateforme custom (SHA-256 `71:5E:B4:D7:4F:69:A4:26:A5:CC:8E:57:C6:D8:B5:28:CC:49:67:D0:B3:50:20:05:AA:AF:23:AA:EB:50:75:90`) ; toute app en `sharedUserId=android.uid.system` doit rester non resignée (tentative `Settings_v1_aligned.apk` rejetée).
-- Doute : le terme « réinimplémentation » utilisé dans la demande correspond ici à une réinstallation de l'APK d'origine + patch du framework système, pas à une réécriture du code de Settings.
-
-### Clavier virtuel (2026-10-11 → 2026-10-12)
-- Pourquoi : aucun IME fonctionnel (`default_input_method` pointait vers LeanbackIme non installé après debloat) ; l'écran étant non tactile, la saisie doit être navigable à la manette.
-- 2026-10-11 : `LatinIME.apk` installé en `/system/app`, `ime enable`/`ime set` et `enabled_input_methods` corrigés ; clavier affiché et opérationnel (rendu vérifié).
-- Choix : IME Leanback (`com.google.android.leanback.ime` v1.0.2.2423292, minSdk 16) retenu pour la navigation D-pad ; `A = DPAD_CENTER` (valide) et `B = BACK` déjà mappingués nativement ; `com.android.inputmethod.leanback` (min API 35) inutilisable.
-- 2026-10-11 : tentative de patch smali `clearFlags(FLAG_NOT_FOCUSABLE)` infructueuse (clavier ne s'affiche plus) ; APK original restauré, LatinIME gardé en secours.
-- 2026-10-12 : cause réelle trouvée : `ViewRootImpl$ImeInputStage.onProcess()` était neutralisée dans `framework.jar` (toujours `FORWARD`) ; restauration de la logique AOSP KitKat, avec sauvegarde `/sdcard/framework.jar.stock`.
-- 2026-10-12 : validation fonctionnelle (flèches déplacent la sélection, centre valide la touche), puis clavier agrandi par patch de `resources.arsc` (`key_width` 28→60 dp, `key_height` 28→44 dp ; fenêtre 234→330 px de haut, ~780 px de large).
-- 2026-10-12 : framework propre sans logs de diagnostic (md5 `41a4adb67874252b71bf33827b894e56`), suppression de LatinIME, Leanback seul IME actif ; reste à valider physiquement la manette dans toutes les applications.
-
-### Souris virtuelle et firmware associé (2026-10-13 → 2026-11-21)
-- 2026-10-13 : projet « souris via stick droit » : R1+R2 maintenus bascule le mode, stick droit = déplacement, R1 = clic gauche, R2 = clic droit, daemon userspace via `/dev/uinput`.
-- 2026-10-13 : M33 donne des codes dédiés aux sticks (183..190) pour distinguer stick droit et ABXY ; R1 physique = 295, R2 = 293, keylayout usine corrigé sans flash.
-- 2026-10-13/14 : premier daemon `/data/local/tmp/mouse_daemon` validé ; OSD `com.sjgam.mouseosd` affiche les toasts ON/OFF ; correctif `umask 0` dans `/system/bin/sjgam_mouse.sh` pour que `/dev/sjgam_mouse` soit lisible par l'OSD.
-- 2026-10-14 : validation utilisateur « impec ça fonctionne nikel » ; l'absence de toast après reboot était un problème de timing (bascule avant le démarrage du service BOOT_COMPLETED), pas un bug.
-- 2026-11-06 : traducteur clic→tap restauré puis remplacé par `sjgam_touchd` en C (uinput direct, drag & drop, chord court annulé) ; décision finale : clic souris seul, tactile désactivé (le tap perturbait MediaBox et le menu DraStic).
-- 2026-11-20 : clic droit du daemon converti en `KEYCODE_BACK` par le framework Rockchip ; tentative de patch `android.policy.jar` abandonnée, framework remis à l'origine (`android.policy.jar.orig`, md5 `ff2c543f...`) et reboot.
-- 2026-11-20 : OSD corrigé (libellés inversés, toast au premier poll) puis archivé `WORKING/SJGAMMouseOSD-mode-fixed.apk`.
-- 2026-11-21 : déplacement fluide (boucle 10 ms, accumulateur sous-pixel) ; correction uinput RK3188 (un seul `input_event` par `write()`, 3 writes REL_X/REL_Y/SYN_REPORT), validation utilisateur « ha oui ! la c'est beau, c'est propre ! ».
-- 2026-11-21 : binaire `/system/bin/mouse_daemon` md5 `5fbeaecc3805a2a6de8c863b6916c631`, réglage à chaud `/data/local/tmp/sjgam_mouse_speed` (facteur 1/128, bornes 32..320), sauvegarde `/mnt/internal_sd/mouse_daemon.pre-smooth`.
-- 2026-11-21 : toasts OSD passés en anglais par patch DEX en place (tailles égales, signature/checksum DEX recalculés, même clé debug), `WORKING/SJGAMMouseOsd-i18n.apk` md5 `927623418e6ec2dc413e42e220726579`.
-- 2026-11-23 : combo START+SELECT 3 s greffé sur `sjgam_touchd` pour force-stop de l'app au premier plan, avec toast OSD `App stopped: <pkg>` ; binaire md5 `0c1784a2e446abf59f1c5effb9343380`, APK md5 `7dc0df3a847c975746acd66a7bd0cc1e`.
-- 2026-11-24 : la souris firmware (rk29-mouse + `mouse_daemon` + Mouse OSD) est confirmée comme seul mécanisme : aucun chord dans le port MAX et aucun pont tactile ajouté.
-
-### Cores libretro et jalon GBA/mGBA (2026-11-02 → 2026-11-04)
-- 2026-11-02 : sources mGBA disponibles, build Android NDK r15c (API 19, armeabi-v7a) préparé en secours.
-- 2026-11-03 : les cores buildbot officiels (NDK r29, API 21) échouent sur Android 4.4 (`__strncpy_chk2` etc.) ; les cores SJGAM de la SD ne sont pas chiffrés, seuls les 32 premiers octets de l'en-tête ELF sont remplacés et reconstructibles.
-- 2026-11-03 : core mGBA SJGAM récupéré installé par défaut dans `/data/data/com.retroarch.ra32/cores/mgba_libretro_android.so` (md5 `790f7ef47f732fd96a2012c8cdc01a51`) ; secours r15c md5 `db27aec1f45d4d67362b3a665d0cc352`.
-- 2026-11-03 : validation utilisateur sur 4 roms GBA (sans modification des dumps/roms), géométrie 240×160, audio OpenSL actif, ~83 Mo RSS ; Snes9x SJGAM (md5 `e1d8df49fa53fdc15166c172ed69bc6a`) également validé en jeu.
-- 2026-11-03 : `com.emu` (cible d'origine du frontend SJGAM) reste bloqué avant affichage ; ne pas y consacrer de temps, passer par `com.retroarch.ra32`.
-- 2026-11-04 : 23 cores ARM32 utiles installés dans le dossier privé RetroArch (UID 10042, modes 755), ~126 Mio, MD5 identiques aux originaux SJGAM ; validation en jeu limitée à mGBA, Snes9x et MAME 2003 Plus, les autres restant vérifiés statiquement.
-- Doute : les deux cores Desmume récupérés sont AArch64 et incompatibles avec la M27.
-
-### Frontend SJGAM et menu APKS (2026-11-02 → 2026-11-24)
-- 2026-11-02 : frontend hybride (base MediaBox + navigateur de roms) retenu, avec conservation du scanner de plateformes et des lanceurs.
-- 2026-11-09 : v0.2 : accueil refait en mosaïque 1280×720 adaptée à 1024×600, tuiles RetroArch/Mes applications/Paramètres/Total Commander/Clean RAM, bandeau de plateformes depuis `/mnt/external_sd/iroms` ; v0.3 : passage à `com.retroarch.ra32` + cores internes ; v0.4 : frise façon carousel.
-- 2026-11-12 → 13 : v0.5/0.6 (jeux récents, scan corrigé, miniatures), puis v0.7 → 0.36 (plates-formes manquantes, thème UI, icônes insensibles à la casse, fonds par plateforme, réglages de la frise et de LAST GAMES).
-- 2026-11-15 : v0.37 → 0.95 : habillage (boîtier DVD, transparences, ombres, jaquette inclinée, `NoPreview.png`), renommage GBA, direct intent DraStic (v0.83, `ACTION_VIEW` + `Uri.fromFile`), touche Retour ignorée (v0.95).
-- 2026-11-16 : v1.0 → 1.24 : intégration de SJGAM Control, contrôle CPU ajouté puis retiré, interface anglaise, tuiles et panneaux ajustés, 8 colonnes dans « Mes applications », orientation paysage forcée.
-- 2026-11-17 : v1.05 : `RomLauncher.standaloneIntent()` étendu à tous les émulateurs APK autonomes (DraStic, Mupen64Plus AE, Flycast, PPSSPP) ; validation NDS/N64/PSP, Flycast v2.5 patché (`Uri.getPath()`), BIOS Dreamcast ajoutés et réglages performance appliqués.
-- Doute : la numérotation n'est pas monotone dans les sources (v1.24 le 16/11, v1.05 le 17/11) ; les deux versions coexistent dans les journaux, sans explication explicite.
-- 2026-11-19 : MediaBox Launcher désinstallé après sauvegarde `WORKING/mediaboxlauncher-installed-before-removal.apk` ; le frontend SJGAM devient le seul launcher HOME.
-- 2026-11-20 : frontend et Mouse OSD déplacés vers `/system/app/SJGAMFrontend.apk` et `/system/app/SJGAMMouseOsd.apk` pour être masqués de la grille ; préférences restaurées (`recent_roms.xml`, `rom_inventory.xml`), grille « Apps » réduite à 10 entrées ; mise à jour future = remplacer l'APK système + reboot, pas `adb install -r`.
-- 2026-11-23 : service système `search` restauré dans `services.jar` (patch `ServerThread`) pour corriger le force-close de MX Player ; sauvegardes `BACKUPS/2026-11-23-search-service/`.
-- 2026-11-24 : confusion 6/7 colonnes dans le menu APKS (`MyAppsActivity`) : le build déployé `d02dbe9e...` (versionCode 122) avait 6 colonnes, le build de travail `a1641ac1...` (versionCode 124) en avait 7.
-- 2026-11-24 : après correction de l'interprétation par l'utilisateur (« c'est la 7 colonnes qui est le correctif »), le build 7 colonnes est réinstallé dans `/data/app` et validé visuellement dans le menu APKS ; l'archive firmware reste sur 6 colonnes par décision de reporter la reconstruction.
-
-### Stubs Google/Vending et billing Riptide (2026-11-20 → 2026-11-24)
-- 2026-11-20 : Riptide GP2 plantait sur `IabHelper.startSetup` car `com.android.vending` absent ; stub AIDL `com.android.vending.billing.InAppBillingService.BIND` (13 Ko) répondant `BILLING_UNAVAILABLE` (code 3), sans patcher le jeu.
-- 2026-11-20 : stub installé en `/system/app/VendingStub.apk` (root:root 644) pour être invisible dans la grille du frontend ; reboot vérifié, jeu démarré, `/system` remis en lecture seule, archive `WORKING/VendingBillingStub.apk`.
-- 2026-11-23 : 20 stubs de présence fabriqués (`STUBS/`, DEX minimal obligatoire sinon dexopt échoue) puis, à la demande de l'utilisateur, 14 stubs réseaux sociaux/navigateurs/Amazon supprimés.
-- 2026-11-23 : 6 stubs conservés : VendingStub, GmsStub, GsfStub, PlayGamesStub, YouTubeStub, GoogleSearchStub ; limites documentées : présence uniquement, pas de sign-in/achats/SafetyNet (microG nécessaire pour de vraies API).
-- 2026-11-24 : 5 stubs désactivés par `pm disable` (GMS, GSF, Play Games, YouTube, Google Search), VendingStub conservé car il fait fonctionner Riptide GP2 ; sauvegardes `DUMPS & SAVES/stubs-cleanup-20261124/`, suppression physique non appliquée.
-- 2026-11-24 : Drift Zone 2 affiche « Google Play Store signature invalid » (stub signé avec la clé debug) : aucun stub ne peut corriger cela sans patcher le jeu ou installer un vrai Play Store.
-
-### DraStic : mappings A/B, L2, joycon gauche, souris firmware (2026-11-24)
-- 2026-11-24 : A et B inversés dans DraStic (`_KeyMapConfigs_0_2/0_3` dans `/data/data/com.dsemu.drastic/shared_prefs/_Dra$t1c_Pref$_.xml`) ; échange 4↔23 appliqué après arrêt de l'app, validation « c'est mieux », sauvegarde `DUMPS & SAVES/drastic-ab-fix-20261124/prefs-avant.xml`.
-- 2026-11-24 : `.ui.Settings` s'ouvre sans crash ; le plantage survient seulement lors d'une navigation dans le panneau, non reproduit dans la séquence journalisée.
-- 2026-11-24 : passage dans `.ui.KeyMapper` réécrit le XML et rétablit l'ancien mapping A/B ; correctif réappliqué après `force-stop` ; avertissement : toute passe dans le KeyMapper UI écrase le correctif.
-- 2026-11-24 : L2 = Open Menu (index 20 = keycode 104 `BUTTON_L2`) écrit directement dans les préférences, validation « impec ca marche », cohérent avec L1=102/R1=103 et le mapping du port MAX.
-- 2026-11-24 : joycon gauche assigné à Screen-swap (index 16 = 198), Fast forward (index 17 = 196) et 1/2 Screen Swap (index 25 = 199), identification par corrélation `getevent -l -t` / logcat, validation « c'est nikel ».
-- 2026-11-24 : aucun keylayout système modifié pour ces réglages ; la souris firmware permet les appuis à l'écran, aucune souris virtuelle supplémentaire ajoutée.
-
-### Packaging de l'archive firmware (2026-11-24)
-- 2026-11-24 : création du dossier `PACKAGING/` (`MANIFEST.md`, `stage/`, 30 fichiers, `FILES.txt`, `MD5SUMS.txt`) ; règle retenue : la source de vérité est l'état réellement déployé et validé sur la console, pas les copies de travail.
-- 2026-11-24 : divergences corrigées côté Linux : code frontend resynchronisé sur la version déployée (à ce moment 6 colonnes), `TOOLS/sjgam_mouse.sh` (md5 `e9b6bd761db9ee845f0e64eb153d4081`) et `TOOLS/sjgam_touchd.arm` (md5 `0c1784a2e446abf59f1c5effb9343380`).
-- 2026-11-24 : décision utilisateur : archive flashable Rockchip avec « tout le valide, hors données de jeu » ; création de `PACKAGING/rockchip-m27-custom/` et `PACKAGING/sjgam-m27-custom-20261124.zip`.
-- 2026-11-24 : archive de 231 399 853 octets, md5 `4ac17e4c7c14d56ae206dceb86361140`, `unzip -t` OK ; sources du Mouse OSD incluses (`rebuild-mouseosd.sh` produisant un DEX identique md5 `98838ca8...`).
-- 2026-11-24 : images packées : `parameter` (1024 o), `kernel.img` (M38 rempli à 12 Mo), `boot.img` usine (md5 `5da0f206ca49f13bb5b7165ea73f82c2`), `recovery.img` (md5 `7aac2177...`), `misc.img` (md5 `cf4825bb...`), `system.img` ext4 brut (805 306 368 o, md5 `af895a12...`).
-- 2026-11-24 : `system.img` = dump usine + 19 fichiers validés écrits via `debugfs` ; `e2fsck -fn` propre, 1188 fichiers identiques à la console, un seul APK de jeu ajouté dans `/system/app` ; delta = 6 fichiers modifiés + 13 ajoutés, 75 liens symboliques identiques.
-- 2026-11-24 : `flash.sh` (bash -n OK) : reconnaissance + backup par défaut, `--write` (kernel/boot/recovery/system puis relecture et `cmp`), `--restore`, contrôle des frontières `KRNL` à 0x4000 et 0xa000 ; pas de formatage de `userdata`/`cache`, pas d'écriture SD, aucun loader distribué.
-- 2026-11-24 : rien n'a été flashé ni modifié sur la console à ce stade ; points ouverts avant fabrication : format de distribution, périmètre exact, script de reconstruction du Mouse OSD.
-
-### Nettoyage de la console et fin de session (2026-11-24)
-- 2026-11-24 : sauvegarde complète de `/data/local/tmp` avant nettoyage (`DUMPS & SAVES/console-cleanup-20261124/data-local-tmp/`, 135 fichiers, 25 Mo, `MD5SUMS.txt` md5 `86793897f1aa7438b6a868287a17211a`).
-- 2026-11-24 : 125 fichiers temporaires supprimés (captures framebuffer ~21 Mo, copies de stubs, anciens OSD, diagnostics, vidéos de test, anciens binaires/scripts) ; `/data/local/tmp` passe de 24,7 Mo à 1,5 Mo.
-- 2026-11-24 : conservés : `sjgam_mouse_speed`, `sjgam_touchd.pid/.log`, `mouse_daemon.log`, `mouse_daemon_autostart.log`, `settings.ini.bak-italian`, `services_patched.jar`, `sd_boot.bin`, `usbmark_hook`, `ctsScreenShot/`.
-- 2026-11-24 : vérifications post-nettoyage : noyau #38, keylayout `29fb5f55...`, apps présentes, `mouse_daemon` (pid 757) et `sjgam_touchd` (pid 758) actifs ; aucune donnée de jeu/SD/rom touchée.
-- 2026-11-24 : tentative de remplacement du frontend 7 colonnes par le 6 colonnes puis correction de l'interprétation ; retour au build `a1641ac1...` via `adb install -r` (upgrade), sauvegarde de la version 6 colonnes dans `DUMPS & SAVES/frontend-7col-20261124/`.
-- 2026-11-24 : fin de session « on stop la » : aucun flash, aucun reboot forcé, aucune autre modification ; console en frontend 7 colonnes, DraStic corrigé, 5 stubs désactivés, souris firmware intacte.
-- 2026-11-24 : archive inchangée (6 colonnes, 6 stubs) ; à reprendre : tests Riptide GP2 (billing), Drift Zone 2, MX Player (recherche) et menu APKS, puis une seule reconstruction de l'archive après validation.
-- 2026-11-24 : nouveau dépôt GitHub accessible en écriture `git@github.com:wisittheunknow-sys/Sjgam-m27-Unclock.git`, clone local `/var/mnt/stockage/sjgamM27/Sjgam-m27-Unclock`, clé `~/.ssh/id_ed25519_m27`, commit `ab370a6` (README + .gitignore, sans données de jeu ni binaires).
-- 2026-11-24 : tâche HISTORY.md demandée mais reportée au lendemain ; trois agents d'extraction ont produit `/tmp/opencode/history-{kernel,max,global}.md` (sorties périssables, à régénérer si absentes) ; ne pas copier les journaux bruts dans le dépôt (mot de passe de keystore local).
-- Périmètre : le port M.A.X. est détaillé en Partie II et le noyau/pilotes en Partie I ; cette partie se limite au système, au frontend, à l'émulation, aux stubs et au packaging.
-
-## Partie IV — 25/11/2026 : assertion `corruption_detected` dans M.A.X.
+## Annexe B — 25/11/2026 : assertion `corruption_detected` dans M.A.X.
 
 - Signalement utilisateur : `assertion failed at saveloadmenu_save (.../max-android/src/saveloadmenu.cpp:7) triggered 1 time : 'corruption_detected'`. Le chemin affiché est une chaîne compilée dans l'APK (`__FILE__` de la macro `SDL_assert`) : la console n'a jamais tenté de lire ce chemin sur le PC.
 - Vérification : le code est identique au tag amont `klei1984/max` `v0.7.2` (`saveloadmenu.cpp:699-716`) ; cette assertion n'a pas été ajoutée par le port. Le build local active les assertions avec `SDL_ASSERT_LEVEL=2`, d'où l'affichage ; « triggered 1 time » est le comportement one-shot de SDL.
