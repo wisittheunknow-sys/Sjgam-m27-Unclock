@@ -1,62 +1,68 @@
-# Sjgam-m27-Unclock
+# SJGAM M27 — Unclock
 
-Unlock and make the SJgam M27 more user-friendly.
+Unlock and make the SJGAM M27 more usable.
 
-## Constat
+## Findings
 
-- fraude au remarking, Chip avec la mention RK3568B2 --> la réalité : RK3188
-- Pas de chip wifi, mais antenne présente sur la board, surement pour des manettes type ps2 sans fils 
-- Console étudiée avec board R10 rev 2.3 avec chipset RK3188, 512 mb de ram, Android 4.4 AOSP inscrit en totalité dans la Nand.
-- Luncher propre au fabricant embarquant PPSSPP(gametemplate.apk), se servant de cores Libretro pour l'émulation bas niveau (jusqu'a PS1), émulation en APK natif pour N64, dreamcast, PPSSPP
-- Drastic (NDS) absent, pourtant le frontend Sjgam y fait appel pour la NDS (categorie NDS volontairement désactivée)
-- Core Dosbox présent, mais désactivé lui aussi
-- com.emu présent (retroarch), mais quick menu minimal
-- Inventaire des roms via des fichiers gamelist.xml, lus et compilé en cachegames.db (sql) par le frontend, la suppression de celui-ci provoque la création d'une nouvelle cachegames.db
-- Mapping du joycon droit jumelé à ABXY
-- Les joycons sont des boutons 4 appuis pas des axes. 24 inputs au total (rk29-keyboard)
-- impossibilité de quitter le frontend pour android, et verrou si la carte sd n'a pas les fichiers attendus.
-- ADB non actif, recovery condamné par le fabricant, accès au mode LOADER/maskrom rockchip en maintenant VOL- avec cable usb data branché au pc.
+- Remarketing fraud: the chip is marked `RK3568B2`, but it is actually an `RK3188`.
+- No Wi-Fi chip, although an antenna is present on the board, probably for wireless PS2-style controllers.
+- Console studied as PCB R10 rev 2.3 with an RK3188, 512 MB RAM and Android 4.4 AOSP written entirely to NAND. (Dumps of rev 2.2 are also archived.)
+- The stock launcher (`gametemplate.apk`) ships PPSSPP and uses Libretro cores for low-level emulation up to PS1, with native APKs for N64, Dreamcast and PPSSPP.
+- DraStic (NDS) is absent, even though the SJGAM frontend refers to it; the NDS category is deliberately disabled.
+- The DOSBox core is present but also disabled.
+- `com.emu` (RetroArch) is present, but with a minimal quick menu.
+- ROM inventory relies on `gamelist.xml` files, compiled by the frontend into `cachegames.db` (SQLite); deleting that database makes the frontend create a new one.
+- The right joy-con is mapped together with ABXY.
+- The joy-cons are 4-direction buttons, not analog axes: 24 inputs in total (`rk29-keyboard`).
+- It is impossible to leave the frontend for Android, and the frontend locks up if the SD card does not contain the expected files.
+- ADB is inactive, recovery is blocked by the manufacturer, and loader/maskrom access requires holding VOL- while a USB data cable is connected to a PC.
 
-## Objectif
+## Goals
 
-- ADB actif sur système live
-- retrouver les Settings Android
-- Retrouver Android et la possibilité d'installer des APKs
-- Retrouver un quick menu rétroarch fourni et paramétrable
-- Avoir un luncher qui prend en compte les roms ajoutées ou supprimées de manière automatique
-- Implémenter un clavier virtuel navigable au D-pad
-- retrouver l'émulation NDS et DOSBOX
-- implémenter une souris virtuelle pour compenser l'absence de dalle tactile 
+- Enable ADB on the live system.
+- Restore Android Settings.
+- Restore access to Android and the ability to install APKs.
+- Restore a complete, configurable RetroArch quick menu.
+- Have a launcher that automatically picks up ROMs added to or removed from the SD card.
+- Implement a virtual keyboard navigable with the D-pad.
+- Restore NDS and DOSBox emulation.
+- Keep the firmware mouse and its OSD, without adding an extra virtual mouse.
 
-## Règles du dépôt
+## Repository rules
 
-- **Aucune donnée originale de jeu** ne doit être versionnée. Le joueur fournit ses propres copies sur SD.
-- Les images binaires, dumps et APK ne sont pas versionnés : seules les sources, scripts, notes et checksums sont suivis.
+- **No original game data may be versioned.** The player supplies their own copies on the SD card.
+- The `ai*.cpp` sources of the M.A.X. port are not modified: the original AI is preserved.
+- Do not include a Rockchip loader (unauthorised distribution).
+- No binaries, dumps, APKs or secrets (in particular the keystore password) are versioned: only sources, scripts, notes and checksums are tracked.
 
-## Organisation prévue
+## Planned layout
 
-- `docs/` : journaux d'état (`STATE.md`), décisions, procédures.
-- `tools/` : scripts reproductibles (flash, rebuild Mouse OSD, etc.).
-- `kernel/` : config et patches du noyau M38.
-- `frontend/` : sources du frontend.
-- `max/` : sources du port (hors données de jeu).
-- `packaging/` : manifeste et procédures (sans images ni zip).
+- `docs/`: status journals (`STATE.md`), decisions, procedures.
+- `tools/`: reproducible scripts (flashing, Mouse OSD rebuild, etc.).
+- `kernel/`: configuration and patches for the M38 kernel.
+- `frontend/`: frontend sources.
+- `max/`: sources of the M.A.X. port (without game data).
+- `packaging/`: manifests and procedures (no images or ZIPs).
 
-## État
+Currently tracked in the repository: `.gitignore`, `HISTORY.md` and `README.md`.
 
-- Kernel ver.m38 Android recomplilé et configuré grace aux sources : https://github.com/bbelos/rk3188-kernel/tree/master, (gadget USB ajouté, ADB actif, séparation du joycon droit de ABXY, patch du du crash du a la veille)
-- Conservation du System Android 4.4 (meilleur compromis pour ce chipset (rapide, éfficace))
-- Installation d'un settings.apk issu d'une rom tablette kingston rk3188, apk patché car erreur concernant l'interrogation de la connectivité réseau de la console
-- Clavier virtuel implémenté, controllable au D-pad
-- Souris virtuelle implémentée sur joycon droit (appui sur r1+r2 pendant 3 secondes, maintenir SELECT pendant 2 secondes pour changer de mode CLIC à TOUCH)
-- Création d'un nouveau frontend hybrid (android/emulation) avec actualisation des roms au lancement, customisable via le dossier UI sur la carte SD
-- Mise en place de Rétroarch et quickmenu complet (accès via combo SELECT+START)
-- Patch des cores Libretro Sjgam originaux (ils ont une entête qui les rends inutilisable par Rétroarch)
-- Conservation des APK Sjgam originaux (flycast, mupen64plus) car l'émulation de "haut niveau" n'est pas possible via des cores (trop lent), apk obligatoires
-- intégration au frontend des GPIO des RGB joycons et du réglage du BACKLIGHT
-- installation de Drastic pour la NDS et configuration du mapping
-- installation de PPSSPP, qui était intégré au frontend original
-- Ajout de MX PLAYER pour lecture de vidéos et lecture MP3 (problème avec VLC)
+## Status
 
-  
-- Projet M.A.X. Port (https://github.com/klei1984/max) pour android 4.4 dédié Sjgam m27 pour le fun  
+- Kernel M38 (build #38) rebuilt and configured from <https://github.com/bbelos/rk3188-kernel/tree/master>: USB gadget added, ADB enabled, right joy-con separated from ABXY, and the reboot-on-first-suspend crash fixed.
+- Android 4.4 system preserved (the best compromise for this SoC: fast and efficient).
+- `Settings.apk` from a Kingston RK3188 tablet ROM installed and patched because the console's network-connectivity query failed.
+- Virtual keyboard implemented and navigable with the D-pad.
+- Firmware mouse preserved: `rk29-mouse` + `mouse_daemon` + `com.sjgam.mouseosd`. R1+R2 (~3 s) toggles it and the right stick moves the pointer without being tied to ABXY. No virtual mouse was added to the port, no touch→mouse bridge, and no SELECT-2 s CLIC/TOUCH mode (touch was disabled on 06/11).
+- New hybrid frontend (Android/emulation) with ROM refresh at launch and customisation through the `UI` folder on the SD card. The installed build has 7 columns; the firmware archive still has the 6-column build and will be aligned during the final rebuild.
+- Complete RetroArch quick menu (SELECT+START).
+- Original SJGAM Libretro cores patched (their header made them unusable by RetroArch).
+- Original SJGAM APKs kept (Flycast, Mupen64Plus AE) because high-level emulation through cores is too slow; native APKs are required.
+- RGB joy-con GPIOs and backlight control integrated into the frontend.
+- DraStic installed for NDS and its key mappings configured.
+- PPSSPP installed, as it was in the original frontend.
+- MX Player added for video and MP3 playback (VLC had problems).
+- Test firmware archive: `sjgam-m27-custom-20261124.zip` (not versioned). It will be rebuilt once with the final M.A.X. APK after the remaining user tests.
+
+### Annex — M.A.X. port
+
+Port of <https://github.com/klei1984/max> for Android 4.4 on the SJGAM M27, mainly for fun. The original AI is untouched and no game data is bundled: the player supplies their own copy on SD. The final clean APK is `c6f5a77831898618fd69ccac9dcb2e21`, installed at `/data/app/com.max.port-2.apk` and validated on a new game with 30 clean autosave checks. Details are in `HISTORY.md`.
