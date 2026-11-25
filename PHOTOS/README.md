@@ -1,6 +1,6 @@
 # SJGAM M27 photos
 
-23 JPEG photos documenting the console, its disassembly, boards, screen and
+24 JPEG photos documenting the console, its disassembly, boards, screen and
 factory/test screens. They are documentation only: they are not part of the
 firmware archive and contain no game data.
 
