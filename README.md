@@ -33,7 +33,6 @@ Unlock and make the SJGAM M27 more usable.
 ## Repository rules
 
 - **No original game data may be versioned.** The player supplies their own copies on the SD card.
-- The `ai*.cpp` sources of the M.A.X. port are not modified: the original AI is preserved.
 - Do not include a Rockchip loader (unauthorised distribution).
 - No binaries, dumps, APKs or secrets (in particular the keystore password) are versioned: only sources, scripts, notes and checksums are tracked.
 
@@ -54,8 +53,8 @@ Currently tracked in the repository: `.gitignore`, `HISTORY.md` and `README.md`.
 - Android 4.4 system preserved (the best compromise for this SoC: fast and efficient).
 - `Settings.apk` from a Kingston RK3188 tablet ROM installed and patched because the console's network-connectivity query failed.
 - Virtual keyboard implemented and navigable with the D-pad.
-- Firmware mouse preserved: `rk29-mouse` + `mouse_daemon` + `com.sjgam.mouseosd`. R1+R2 (~3 s) toggles it and the right stick moves the pointer without being tied to ABXY. No virtual mouse was added to the port, no touch→mouse bridge, and no SELECT-2 s CLIC/TOUCH mode (touch was disabled on 06/11).
-- New hybrid frontend (Android/emulation) with ROM refresh at launch and customisation through the `UI` folder on the SD card. The installed build has 7 columns; the firmware archive still has the 6-column build and will be aligned during the final rebuild.
+- Firmware mouse preserved: `rk29-mouse` + `mouse_daemon` + `com.sjgam.mouseosd`. R1+R2 (~3 s) toggles it and the right stick moves the pointer without being tied to ABXY. SELECT-2 s CLIC/TOUCH mode.
+- New hybrid frontend (Android/emulation) with ROM refresh at launch and customisation through the `UI` folder on the SD card.
 - Complete RetroArch quick menu (SELECT+START).
 - Original SJGAM Libretro cores patched (their header made them unusable by RetroArch).
 - Original SJGAM APKs kept (Flycast, Mupen64Plus AE) because high-level emulation through cores is too slow; native APKs are required.
@@ -63,7 +62,6 @@ Currently tracked in the repository: `.gitignore`, `HISTORY.md` and `README.md`.
 - DraStic installed for NDS and its key mappings configured.
 - PPSSPP installed, as it was in the original frontend.
 - MX Player added for video and MP3 playback (VLC had problems).
-- Test firmware archive: `sjgam-m27-custom-20261124.zip` (not versioned). It will be rebuilt once with the final M.A.X. APK after the remaining user tests.
 
 ### Annex — M.A.X. port
 
