@@ -53,7 +53,7 @@ Currently tracked in the repository: `.gitignore`, `HISTORY.md` and `README.md`.
 - Android 4.4 system preserved (the best compromise for this SoC: fast and efficient).
 - `Settings.apk` from a Kingston RK3188 tablet ROM installed and patched because the console's network-connectivity query failed.
 - Virtual keyboard implemented and navigable with the D-pad.
-- Firmware mouse preserved: `rk29-mouse` + `mouse_daemon` + `com.sjgam.mouseosd`. R1+R2 (~3 s) toggles it and the right stick moves the pointer without being tied to ABXY. SELECT-2 s CLIC/TOUCH mode.
+- Virtual mouse created: `rk29-mouse` + `mouse_daemon` + `com.sjgam.mouseosd`. R1+R2 (~3 s) toggles it and the right stick moves the pointer without being tied to ABXY. SELECT-2 s CLIC/TOUCH mode.
 - New hybrid frontend (Android/emulation) with ROM refresh at launch and customisation through the `UI` folder on the SD card.
 - Complete RetroArch quick menu (SELECT+START).
 - Original SJGAM Libretro cores patched (their header made them unusable by RetroArch).
