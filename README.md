@@ -28,7 +28,7 @@ Unlock and make the SJGAM M27 more usable.
 - Have a launcher that automatically picks up ROMs added to or removed from the SD card.
 - Implement a virtual keyboard navigable with the D-pad.
 - Restore NDS and DOSBox emulation.
-- Keep the firmware mouse and its OSD, without adding an extra virtual mouse.
+- create a virtual mouse and its OSD.
 
 ## Repository rules
 
